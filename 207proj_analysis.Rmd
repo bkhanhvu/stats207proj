@@ -1,0 +1,332 @@
+---
+title: "STATS207 Project Analysis"
+output: html_document
+date: "2024-06-04"
+---
+
+```{r}
+library(tidyverse)
+library(zoo)
+library(httr)
+library(jsonlite)
+library(astsa)
+library(forecast)
+library(tseries)
+library(prophet)
+```
+# Data Fetching
+
+```{r}
+# Define API key
+api_key <- "gymyk63by4IgrjFeoHZX606z9kwWdWhUhdO8zs9M"
+
+get_data_for_year <- function(base_url, api_key, extra_params) {
+  full_url <- paste0(base_url, "?api_key=", api_key, extra_params)
+  response <- GET(full_url)
+  
+  if (status_code(response) == 200) {
+    data <- content(response, "text", encoding = "UTF-8")
+    json_data <- fromJSON(data)
+    return(json_data$response$data)
+  } else {
+    return(NULL)
+  }
+}
+base_url_gas <- "https://api.eia.gov/v2/natural-gas/cons/sum/data/"
+extra_params_gas <- "&frequency=monthly&data[0]=value&facets[duoarea][]=NUS&facets[process][]=VCS&facets[process][]=VIN&facets[process][]=VRS&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=5000"
+gas_raw <- get_data_for_year(base_url_gas, api_key, extra_params_gas)
+
+base_url_coal <- "https://api.eia.gov/v2/coal/consumption-and-quality/data/"
+extra_params_coal <- "&frequency=quarterly&data[0]=consumption&facets[location][]=US&facets[sector][]=8&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=5000"
+coal_raw <- get_data_for_year(base_url_coal, api_key, extra_params_coal)
+
+# U.S. Regular Gasoline All Sales/Deliveries by Prime Supplier (Thousand Gallons per Day)
+base_url_pet <- "https://api.eia.gov/v2/petroleum/cons/prim/data/"
+extra_params_pet <- "&frequency=monthly&data[0]=value&facets[duoarea][]=NUS&facets[product][]=EPMR&facets[series][]=C120000001&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=5000"
+petroleum_raw <- get_data_for_year(base_url_pet, api_key, extra_params_pet)
+
+# possible extension to Consumption of Fuels for Electricity Generation and Useful Thermal Output
+base_url_electricity <- "https://api.eia.gov/v2/electricity/retail/data/"
+
+```
+
+# Data Cleaning
+## Petroleum
+```{r}
+petroleum <- petroleum_raw %>%
+  select(period, value) %>%
+  mutate(period = as.Date(as.yearmon(period)))%>%
+  mutate(value = as.numeric(value))
+
+ggplot(data = petroleum, aes( period, value )) + 
+  geom_line() +
+  theme_classic() +
+  ylab("Gasoline Deliveries in the US (MMgal/day)")+
+  xlab("Date")+
+  geom_vline(xintercept = as.Date("2020-03-01"), color= "red")
+```
+
+## Coal
+```{r}
+coal <- coal_raw %>%
+  select(period, consumption) %>%
+  mutate(
+    year = as.numeric(substring(period, 1, 4)),
+    quarter = substring(period, 6, 7),
+    month = case_when(
+      quarter == "Q1" ~ 1,
+      quarter == "Q2" ~ 4,
+      quarter == "Q3" ~ 7,
+      quarter == "Q4" ~ 10
+    ),
+    period = as.Date(paste(year, month, "01", sep = "-"))
+  ) %>%
+  select(-year, -quarter, -month) %>%
+  mutate(consumption = as.numeric(consumption))
+
+ggplot(data = coal, aes( period, consumption )) + 
+  geom_line() +
+  theme_classic() +
+  ylab("Coal Commercial/Industrial Consumption in the US")+
+  xlab("Date")+
+  geom_vline(xintercept = as.Date("2020-03-01"), color= "red")
+```
+
+## Natural Gas
+```{r}
+gas <- gas_raw %>%
+  mutate(period = as.Date(as.yearmon(period))) %>%
+  filter(gas_raw$`series-description` == "Natural Gas Deliveries to Commercial Consumers (Including Vehicle Fuel through 1996) in the U.S. (MMcf)") %>%
+  select(c(period, value))  %>%
+  mutate(value = as.numeric(value))
+
+ggplot(data = gas, aes( period, value )) + 
+  geom_line() +
+  theme_classic() +
+  ylab("Natural Gas Delivered to Consumers in the US")+
+  xlab("Date")+
+  geom_vline(xintercept = as.Date("2020-03-01"), color= "red")
+```
+## Check completeness
+```{r}
+# Extract year and count occurrences per year
+yearly_counts <- gas %>%
+  mutate(year = format(period, "%Y")) %>%
+  group_by(year) %>%
+  summarise(count = n())
+
+# Check if every year has 12 points
+(yearly_counts$count == 12)
+
+# Extract year and count occurrences per year
+yearly_counts <- coal %>%
+  mutate(year = format(period, "%Y")) %>%
+  group_by(year) %>%
+  summarise(count = n())
+
+# Check if every year has 4 points
+(yearly_counts$count == 4)
+
+# Extract year and count occurrences per year
+yearly_counts <- petroleum %>%
+  mutate(year = format(period, "%Y")) %>%
+  group_by(year) %>%
+  summarise(count = n())
+
+# Check if every year has 12 points
+yearly_counts$count == 12
+```
+
+Yes, all years have 12 points, except for last year for gas and petroleum
+
+# Data Analysis
+## Restrict datasets to train only
+```{r}
+# separate train and test for each dataset
+gas_full <- gas[order(gas$period), ]
+gas_ts <- ts(gas_full$value, start = c(2001, 1), frequency = 12)
+gas_train <- window(gas_ts, end = c(2020, 2))
+gas_test <- window(gas_ts, start = c(2020, 3))
+
+# previous df approach for gas
+# gas_train <- gas_full %>%
+#   filter(period < "2020-03-01")
+# gas_test <- gas_full %>%
+#   filter(period >= "2020-03-01")
+
+# coal is quarterly
+coal_full <- coal[order(coal$period), ]
+coal_ts <- ts(coal_full$consumption, start = c(2001, 1), frequency = 4)
+coal_train <- window(coal_ts, end = c(2020, 2))
+coal_test <- window(coal_ts, start = c(2020, 3))
+
+# previous df approach for coal
+# coal_train <- coal_full %>%
+#   filter(period < "2020-03-01")
+# coal_test <- coal_full %>%
+#   filter(period >= "2020-03-01")
+
+
+petroleum_full <- petroleum[order(petroleum$period), ]
+petroleum_ts <- ts(petroleum_full$value, start = c(2001, 1), frequency = 12)
+petroleum_train <- window(petroleum_ts, end = c(2020, 2))
+petroleum_test <- window(petroleum_ts, start = c(2020, 3))
+
+# previous df approach for petroleum
+# petroleum_train <- petroleum_full %>%
+#   filter(period < "2020-03-01")
+# petroleum_test <- petroleum_full %>% 
+#   filter(period >= "2020-03-01")
+```
+
+## Fitting petroleum models
+```{r petro_plot_og, echo=TRUE}
+
+plot(petroleum_train)
+acf2(petroleum_train) 
+```
+### Model 1: Manual SARIMA(5,1,1)(3,1,1)_12
+```{r petro_plot_sarima, echo=TRUE}
+petroleum_sarima <- sarima(petroleum_train, p = 5, d = 1, q = 1, P = 3, D = 1, Q = 1, S = 12)
+petroleum_sarima
+
+checkresiduals(petroleum_sarima$fit$residuals)
+```
+```{r petro_sarima_forecast, echo=TRUE}
+petroleum_forecast <- sarima.for(xdata = petroleum_train, n.ahead = 20, p = 5, d = 1, q = 1, P = 3, D = 1, Q = 1, S = 12, plot = TRUE)
+```
+
+### Model 2: Auto SARIMA
+```{r petro_auto_sarima, echo=TRUE}
+sarima_model <- auto.arima(petroleum_train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift = TRUE)
+sarima_forecast <- forecast(sarima_model, h=length(petroleum_test))
+autoplot(sarima_forecast)
+```
+```{r petro_auto_arima_plot, echo=TRUE}
+summary(sarima_model)
+checkresiduals(sarima_model)
+
+```
+
+### Model 3: ETS
+```{r petro_ets, echo=TRUE}
+ets_model <- ets(petroleum_train, model="MAM", damped=TRUE)
+ets_forecast <- forecast(ets_model, h=length(petroleum_test))
+plot(ets_forecast)
+```
+
+```{r petro_ets_plot, echo=TRUE}
+summary(ets_model)
+checkresiduals(ets_model)
+```
+
+### Model 4: TBATS
+```{r petro_tbats, echo=TRUE}
+tbats_model <- tbats(petroleum_train)
+tbats_forecast <- forecast(tbats_model, h=length(petroleum_test))
+plot(tbats_forecast)
+```
+
+```{r petro_tbats_plot, echo=TRUE}
+summary(tbats_model)
+checkresiduals(tbats_model)
+```
+### Prophet Model
+```{r petro_prophet, echo=TRUE}
+
+petroleum_prophet_df <- petroleum_train %>%
+  data.frame(ds = as.Date(time(petroleum_train)), y = petroleum_train)
+
+petroleum_prophet <- prophet(petroleum_prophet_df)
+
+future <- make_future_dataframe(petroleum_prophet, periods = 20, freq = "month")
+petroleum_forecast <- predict(petroleum_prophet, future)
+plot(petroleum_prophet, petroleum_forecast)
+```
+
+```{r petro_prophet_plot, echo=TRUE}
+petro_df_prophet <- head(petroleum_forecast, 230)
+petro_df_prophet <- petro_df_prophet %>%
+  mutate(period = ds, value = yhat, residuals = yhat - petroleum_train)
+
+checkresiduals(petro_df_prophet$residuals)
+```
+### Cross Validation
+
+```{r petro_cv, echo=TRUE, eval=FALSE}
+
+# Create function to calculate RMSE
+calc_rmse <- function(actual, predicted) {
+  sqrt(mean((actual - predicted)^2))
+}
+
+# Load the data
+ts_data <- petroleum_train
+
+# Define the rolling window parameters
+start_year <- 2008
+end_year <- 2018 
+step_size <- 12 # Number of steps to forecast ahead
+year = start_year
+# Initialize vectors to store RMSE values
+sarima_rmses <- c()
+auto_sarima_rmses <- c()
+ets_rmses <- c()
+prophet_rmses <- c()
+
+sarima_aics <- c()
+auto_sarima_aics <- c()
+ets_aics <- c()
+
+# Perform rolling window cross-validation
+for (year in start_year:end_year) {
+  
+  # Define train and validation sets
+  train_end <- c(year , 12)
+  val_start <- c(year + 1, 1)
+  val_end <- c(year + 1, 12)
+  
+  train <- window(ts_data, end=train_end)
+  actual <- window(ts_data, start=val_start, end=val_end)
+  
+  # 1. Fit SARIMA model  
+  sarima_mod <- sarima(xdata = train, p = 4, d = 1, q = 1,P = 3, D = 1, Q = 1, S = 12)
+  sarima_aics <- c(sarima_aics, sarima_mod$fit$aic)
+  sarima_pred <- sarima.for(xdata = train, n.ahead = 12, p = 4, d = 1, q = 1,P = 3, D = 1, Q = 1, S = 12)$pred
+  sarima_rmses <- c(sarima_rmses, calc_rmse(actual, sarima_pred))
+  
+  # 1b. Fit auto SARIMA model
+  auto_sarima_model <- auto.arima(train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift=TRUE)
+  auto_sarima_aics <- c(auto_sarima_aics, auto_sarima_model$aic)
+  auto_sarima_pred <- forecast(auto_sarima_model, h=step_size)$mean
+  auto_sarima_rmses <- c(auto_sarima_rmses, calc_rmse(actual, auto_sarima_pred))
+
+  # 2. Fit ETS model
+  ets_model <- ets(train, model="MAM", damped=TRUE)
+  ets_aics <- c(ets_aics, ets_model$aic)
+  ets_pred <- forecast(ets_model, h=step_size)$mean
+  ets_rmses <- c(ets_rmses, calc_rmse(actual, ets_pred))
+  
+  # 3. Fit Prophet model
+  # note, no AIC since Prophet is Bayesian
+  prophet_df <- data.frame(ds=as.Date(time(train)), y=as.numeric(train))
+  m <- prophet(prophet_df)
+  future <- make_future_dataframe(m, periods=step_size, freq="month")
+  prophet_forecast <- predict(m, future)
+  prophet_pred <- tail(prophet_forecast$yhat, step_size)
+  prophet_rmses <- c(prophet_rmses, calc_rmse(actual, prophet_pred))
+}
+
+# Compare cross-validated performance
+cat("SARIMA avg. RMSE:", mean(sarima_rmses), 
+    "\nAuto SARIMA avg. RMSE:", mean(auto_sarima_rmses),
+    "\nETS avg. RMSE:", mean(ets_rmses),
+    "\nProphet avg. RMSE:", mean(prophet_rmses))
+
+cat("SARIMA avg. AIC:", mean(sarima_aics), # something is very strange here
+    "\nAuto SARIMA avg. AIC:", mean(auto_sarima_aics),
+    "\nETS avg. AIC:", mean(ets_aics))
+```
+
+
+
