@@ -1,0 +1,53 @@
+I. Exponential Smoothing State Space Models (ETS)
+-> Model Structure: Part of family of exponential smoothing model that decomposes time-series into four components, use exponential smoothing to estimate the level, trend, and seasonality of the time series.
+  1. Error: irregular or random fluctuations in the time series that cannot be explained by the trend or seasonality. It can be additive (homoskedastic) or multiplicative (heteroskedastic).
+  2. Trend: long-term pattern or direction of the time series. It can be additive (linear) or multiplicative (exponential).
+  3. Seasonality: periodic or recurring patterns in the time series. It can be additive (constant over time) or multiplicative (varying with the level of the series).
+  4. Level: The baseline value of the time series aka local mean of the series at a given point in time.
+-> Model Evaluation: best fit according to information criteria (e.g., AIC, BIC). Can automate selection of hyperparameters (e.g., smoothing parameters, trend type, seasonality type) 
+-> Pros: simple and easy to interpret, suitable for data with clear trend and seasonality patterns, robust to missing values.
+-> Cons: not suitable for data with complex patterns or multiple seasonal periods
+
+II. SARIMA/Auto-Arima Model
+-> Model Structure: an extension of the ARIMA model that includes seasonal components. It is a combination 
+1.Seasonal (S) - captures the recurring patterns in the time series that repeat at fixed intervals (e.g., weekly, monthly, yearly
+2. Autoregressive (AR) - models the relationship between an observation and a certain number of lagged observations.
+3. Moving Average (MA) - models the relationship between an observation and a residual error from a moving average model applied to lagged observations.
+4. Integrated (I) - the order of differencing needed to make the time series stationary
+Use maximum likelihood estimation to estimate the parameters of the model.
+  • ARIMA(p,d,q)(P,D,Q)s, where p, d, q are the non-seasonal AR, differencing, and MA orders, P, D, Q are the seasonal AR, differencing, and MA orders, and s is the seasonal period.
+-> Model Evaluation: best fit according to information criteria (e.g., AIC, BIC). Can automate selection of hyperparameters (e.g., p, d, q, P, D, Q, s) using grid search or stepwise search.
+-> Pros: Compared to ETS, SARIMA is more flexible and can capture complex autocorrelations/patterns, seasonal behaviors, and interactions between the trend and seasonality. Can handle non-stationary data by differencing to remove trends.
+-> Cons: More complex and computationally intensive than ETS. Requires manual selection of hyperparameters (e.g., p, d, q, P, D, Q, s). Not robust to time series that's highly irregular or has significant outliers
+
+III. Prophet Model
+-> Model Structure: a forecasting model developed by Facebook that decomposes time series into trend, seasonality, and holiday components. It uses a generalized additive model (GAM) framework with piecewise linear or logistic growth curves. Fit the model using a Bayesian approach with MCMC sampling or optimization.
+  1. Trend: captures the overall growth or decline in the time series. Prophet uses a piecewise linear or logistic growth curve to model the trend, allowing for flexibility in capturing changes in the growth rate over time. The trend can be non-linear and include changepoints.
+      a. Piecewise linear growth: the trend is modeled as a series of linear segments with changepoints that capture shifts in the growth rate.
+      b. Logistic growth: the trend is modeled as a logistic function that approaches an asymptote over time.
+  2. Seasonality: captures the periodic or recurring patterns in the time series. Prophet supports multiple seasonality types, including daily, weekly, monthly, and yearly seasonality. It uses Fourier series to model the seasonal patterns.
+  3. Holiday: captures the impact of holidays or special events (can customize) on the time series. Models the effect of holidays as additive or multiplicative.
+  4. Error: captures the random fluctuations or noise in the time series that cannot be explained by the trend, seasonality, or holiday components.
+-> Model Evaluation: uses cross-validation to evaluate the forecast accuracy. Can customize the evaluation metric (e.g.,  MAE, MSE, and MAPE.) and the horizon of the forecast.
+-> Pros: easy to use (can automate hyperparameter tunings) and requires minimal data preprocessing. Can handle missing data and outliers by interpolation. Provides interpretable forecasts with uncertainty intervals. Supports custom holiday effects and flexible trend modeling. Fourier series for seasonality allows multiple complex seasonal patterns. Can include additional regressors to improve forecast accuracy. Doesn't require stationarity
+-> Cons: ETS and SARIMA may outperform Prophet on time series with simple patterns without clear trend or seasonality. Does not explicitly model autocorrelations or capture complex interactions between trend and seasonality. Lack of transparency in the underlying model. Subpar prediction performance on time series with irregular patterns (noise) or significant outliers.
+
+IV. TBATS Model
+-> Model Structure: a forecasting model that decomposes time series into trend, seasonality, and error components using a combination of trigonometric, Box-Cox transformation, ARMA, and exponential smoothing. It can handle multiple seasonalities and irregular patterns in the time series.
+  1. Trend: captures the long-term pattern or direction of the time series. It can model various types of trends, including linear, damped, and exponential trends.
+  2. Trigometric Seasonality: captures the periodic or recurring patterns in the time series. Uses trigonometric functions (Fourier terms) to model complex seasonal patterns. It can handle multiple seasonal periods and non-integer seasonality.
+  4. Box-Cox transformation: applies Box-Cox transformation that stabilizes the variance of the time series. It can handle non-constant variance and improve the model's performance.
+  5. ARMA Errors : an autoregressive moving average model that captures the autocorrelations in the residuals after accounting for the trend and seasonality.
+  6. Seasonal Components: can captures multiple seasonal periods and irregular seasonal patterns. Each component is modeled using trigonometric functions (Fourier terms) to capture complex seasonal patterns.
+  
+  Auto-ARIMA is applied to the residuals of the TBATS model to capture any remaining autocorrelations in the time series and determine the best ARIMA order. 
+  
+-> Model Evaluation: Final model chosen using AIC. 
+
+-> Pros: Can handle multiple complex seasonalities that SARIMA/ETS/Prophet might struggle with. Highly flexible: can adapt to a wide range of seasonality patterns, non-linear trends, and autocorrelation structures in residual. Robust to missing values and outliers. Can handle non-constant variance by applying Box-Cox transformation and reduce impact of outliers. Reliable in forecasting irregular time series patterns.
+
+-> Cons: More complex and computationally intensive than ETS and Prophet. Less interpretable and prone to overfitting due to the high number of parameters.
+
+
+
+  

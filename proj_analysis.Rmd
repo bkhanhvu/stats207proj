@@ -144,7 +144,7 @@ Yes, all years have 12 points, except for last year for gas and petroleum
 ```{r}
 # separate train and test for each dataset
 gas_full <- gas[order(gas$period), ]
-gas_ts <- ts(gas_full$value, start = c(2001, 1), frequency = 12)
+gas_ts <- ts(gas_full$value, start = c(1973, 1), frequency = 12)
 gas_train <- window(gas_ts, end = c(2020, 2))
 gas_test <- window(gas_ts, start = c(2020, 3))
 
@@ -156,7 +156,7 @@ gas_test <- window(gas_ts, start = c(2020, 3))
 
 # coal is quarterly
 coal_full <- coal[order(coal$period), ]
-coal_ts <- ts(coal_full$consumption, start = c(2001, 1), frequency = 4)
+coal_ts <- ts(coal_full$consumption, start = c(2000, 1), frequency = 4)
 coal_train <- window(coal_ts, end = c(2020, 2))
 coal_test <- window(coal_ts, start = c(2020, 3))
 
@@ -187,13 +187,16 @@ acf2(petroleum_train)
 ```
 ### Model 1: Manual SARIMA(5,1,1)(3,1,1)_12
 ```{r petro_plot_sarima, echo=TRUE}
-petroleum_sarima <- sarima(petroleum_train, p = 5, d = 1, q = 1, P = 3, D = 1, Q = 1, S = 12)
+petroleum_sarima <- sarima(petroleum_train, p = 4, d = 2, q = 1, P = 3, D = 1, Q = 1, S = 12)
 petroleum_sarima
 
 checkresiduals(petroleum_sarima$fit$residuals)
+
+# check auto correlation of residuals
+acf2(petroleum_sarima$fit$residuals)
 ```
 ```{r petro_sarima_forecast, echo=TRUE}
-petroleum_forecast <- sarima.for(xdata = petroleum_train, n.ahead = 20, p = 5, d = 1, q = 1, P = 3, D = 1, Q = 1, S = 12, plot = TRUE)
+petroleum_forecast <- sarima.for(xdata = petroleum_train, n.ahead = 20, p = 4, d = 2, q = 1, P = 3, D = 1, Q = 1, S = 12, plot = TRUE)
 ```
 
 ### Model 2: Auto SARIMA
