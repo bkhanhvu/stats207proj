@@ -346,157 +346,6 @@ cat("SARIMA avg. AIC:", mean(sarima_aics), # something is very strange here
     "\nETS avg. AIC:", mean(ets_aics))
 ```
 
-
-
-## Fitting coal models
-```{r coal_plot_og, echo=TRUE}
-
-plot(coal_train)
-acf2(coal_train) 
-```
-### Model 1: Manual SARIMA(5,1,1)(3,1,1)_12
-```{r coal_plot_sarima, echo=TRUE}
-coal_sarima <- sarima(coal_train, p = 5, d = 1, q = 1, P = 3, D = 1, Q = 1, S = 12)
-coal_sarima
-
-checkresiduals(coal_sarima$fit$residuals)
-```
-```{r coal_sarima_forecast, echo=TRUE}
-coal_forecast <- sarima.for(xdata = coal_train, n.ahead = 20, p = 5, d = 1, q = 1, P = 3, D = 1, Q = 1, S = 12, plot = TRUE)
-```
-
-### Model 2: Auto SARIMA
-```{r coal_auto_sarima, echo=TRUE}
-sarima_model <- auto.arima(coal_train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift = TRUE)
-sarima_forecast <- forecast(sarima_model, h=length(coal_test))
-autoplot(sarima_forecast)
-```
-```{r coal_auto_arima_plot, echo=TRUE}
-summary(sarima_model)
-checkresiduals(sarima_model)
-
-```
-
-### Model 3: ETS
-```{r coal_ets, echo=TRUE}
-ets_model <- ets(coal_train, model="MAM", damped=TRUE)
-ets_forecast <- forecast(ets_model, h=length(coal_test))
-plot(ets_forecast)
-```
-
-```{r coal_ets_plot, echo=TRUE}
-summary(ets_model)
-checkresiduals(ets_model)
-```
-
-### Model 4: TBATS
-```{r coal_tbats, echo=TRUE}
-tbats_model <- tbats(coal_train)
-tbats_forecast <- forecast(tbats_model, h=length(coal_test))
-plot(tbats_forecast)
-```
-
-```{r coal_tbats_plot, echo=TRUE}
-summary(tbats_model)
-checkresiduals(tbats_model)
-```
-### Prophet Model
-```{r coal_prophet, echo=TRUE}
-
-coal_prophet_df <- coal_train %>%
-  data.frame(ds = as.Date(time(coal_train)), y = coal_train)
-
-coal_prophet <- prophet(coal_prophet_df)
-
-future <- make_future_dataframe(coal_prophet, periods = 20, freq = "month")
-coal_forecast <- predict(coal_prophet, future)
-plot(coal_prophet, coal_forecast)
-```
-
-```{r coal_prophet_plot, echo=TRUE}
-coal_df_prophet <- head(coal_forecast, 230)
-coal_df_prophet <- coal_df_prophet %>%
-  mutate(period = ds, value = yhat, residuals = yhat - coal_train)
-
-checkresiduals(coal_df_prophet$residuals)
-```
-### Cross Validation
-
-```{r coal_cv, echo=TRUE, eval=FALSE}
-# Create function to calculate RMSE
-calc_rmse <- function(actual, predicted) {
-  sqrt(mean((actual - predicted)^2))
-}
-
-# Load the data
-ts_data <- coal_train
-
-# Define the rolling window parameters
-start_year <- 2008
-end_year <- 2018 
-step_size <- 12 # Number of steps to forecast ahead
-year = start_year
-# Initialize vectors to store RMSE values
-sarima_rmses <- c()
-auto_sarima_rmses <- c()
-ets_rmses <- c()
-prophet_rmses <- c()
-
-sarima_aics <- c()
-auto_sarima_aics <- c()
-ets_aics <- c()
-
-# Perform rolling window cross-validation
-for (year in start_year:end_year) {
-  
-  # Define train and validation sets
-  train_end <- c(year , 12)
-  val_start <- c(year + 1, 1)
-  val_end <- c(year + 1, 12)
-  
-  train <- window(ts_data, end=train_end)
-  actual <- window(ts_data, start=val_start, end=val_end)
-  
-  # 1. Fit SARIMA model  
-  sarima_mod <- sarima(xdata = train, p = 4, d = 1, q = 1,P = 3, D = 1, Q = 1, S = 12)
-  sarima_aics <- c(sarima_aics, sarima_mod$fit$aic)
-  sarima_pred <- sarima.for(xdata = train, n.ahead = 12, p = 4, d = 1, q = 1,P = 3, D = 1, Q = 1, S = 12)$pred
-  sarima_rmses <- c(sarima_rmses, calc_rmse(actual, sarima_pred))
-  
-  # 1b. Fit auto SARIMA model
-  auto_sarima_model <- auto.arima(train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift=TRUE)
-  auto_sarima_aics <- c(auto_sarima_aics, auto_sarima_model$aic)
-  auto_sarima_pred <- forecast(auto_sarima_model, h=step_size)$mean
-  auto_sarima_rmses <- c(auto_sarima_rmses, calc_rmse(actual, auto_sarima_pred))
-
-  # 2. Fit ETS model
-  ets_model <- ets(train, model="MAM", damped=TRUE)
-  ets_aics <- c(ets_aics, ets_model$aic)
-  ets_pred <- forecast(ets_model, h=step_size)$mean
-  ets_rmses <- c(ets_rmses, calc_rmse(actual, ets_pred))
-  
-  # 3. Fit Prophet model
-  # note, no AIC since Prophet is Bayesian
-  prophet_df <- data.frame(ds=as.Date(time(train)), y=as.numeric(train))
-  m <- prophet(prophet_df)
-  future <- make_future_dataframe(m, periods=step_size, freq="month")
-  prophet_forecast <- predict(m, future)
-  prophet_pred <- tail(prophet_forecast$yhat, step_size)
-  prophet_rmses <- c(prophet_rmses, calc_rmse(actual, prophet_pred))
-}
-
-# Compare cross-validated performance
-cat("SARIMA avg. RMSE:", mean(sarima_rmses), 
-    "\nAuto SARIMA avg. RMSE:", mean(auto_sarima_rmses),
-    "\nETS avg. RMSE:", mean(ets_rmses),
-    "\nProphet avg. RMSE:", mean(prophet_rmses))
-
-cat("SARIMA avg. AIC:", mean(sarima_aics), # something is very strange here
-    "\nAuto SARIMA avg. AIC:", mean(auto_sarima_aics),
-    "\nETS avg. AIC:", mean(ets_aics))
-```
-
-
 ## Fitting natural gas models
 ```{r ng_plot_og, echo=TRUE}
 
@@ -646,61 +495,60 @@ cat("SARIMA avg. AIC:", mean(sarima_aics), # something is very strange here
     "\nETS avg. AIC:", mean(ets_aics))
 ```
 
-## Claire Coal Code
-## Fitting models
+## Fitting coal models
 ```{r petro_plot_og, echo=TRUE}
 
 plot(coal_train)
 acf2(coal_train) 
 ```
 ### Model 1: Manual SARIMA(2, 0, 0)(1, 1, 0)_4
-```{r petro_plot_sarima, echo=TRUE}
+```{r coal_plot_sarima, echo=TRUE}
 coal_sarima <- sarima(coal_train, p = 2, d = 0, q = 0, P = 1, D = 1, Q = 0, S = 4)
 coal_sarima
 
 checkresiduals(coal_sarima$fit$residuals)
 ```
-```{r petro_sarima_forecast, echo=TRUE}
+```{r coal_sarima_forecast, echo=TRUE}
 coal_forecast <- sarima.for(xdata = coal_train, n.ahead = 20, p = 2, d = 0, q = 0, P = 1, D = 1, Q = 0, S = 4, plot = TRUE)
 ```
 
 ### Model 2: Auto SARIMA
-```{r petro_auto_sarima, echo=TRUE}
+```{r coal_auto_sarima, echo=TRUE}
 sarima_model <- auto.arima(coal_train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift = TRUE)
 sarima_forecast <- forecast(sarima_model, h=length(coal_test))
 autoplot(sarima_forecast)
 ```
-```{r petro_auto_arima_plot, echo=TRUE}
+```{r coal_auto_arima_plot, echo=TRUE}
 summary(sarima_model)
 checkresiduals(sarima_model)
 
 ```
 
 ### Model 3: ETS
-```{r petro_ets, echo=TRUE}
+```{r coal_ets, echo=TRUE}
 ets_model <- ets(coal_train, model="MAM", damped=TRUE)
 ets_forecast <- forecast(ets_model, h=length(coal_test))
 plot(ets_forecast)
 ```
 
-```{r petro_ets_plot, echo=TRUE}
+```{r coal_ets_plot, echo=TRUE}
 summary(ets_model)
 checkresiduals(ets_model)
 ```
 
 ### Model 4: TBATS
-```{r petro_tbats, echo=TRUE}
+```{r coal_tbats, echo=TRUE}
 tbats_model <- tbats(coal_train)
 tbats_forecast <- forecast(tbats_model, h=length(coal_test))
 plot(tbats_forecast)
 ```
 
-```{r petro_tbats_plot, echo=TRUE}
+```{r coal_tbats_plot, echo=TRUE}
 summary(tbats_model)
 checkresiduals(tbats_model)
 ```
 ### Prophet Model
-```{r petro_prophet, echo=TRUE}
+```{r coal_prophet, echo=TRUE}
 
 coal_prophet_df <- coal_train %>%
   data.frame(ds = as.Date(time(coal_train)), y = coal_train)
@@ -713,7 +561,7 @@ coal_forecast <- predict(coal_prophet, future)
 plot(coal_prophet, coal_forecast)
 ```
 
-```{r petro_prophet_plot, echo=TRUE}
+```{r coal_prophet_plot, echo=TRUE}
 coal_df_prophet <- head(coal_forecast, 50)
 coal_df_prophet <- coal_df_prophet %>%
   mutate(period = ds, value = yhat, residuals = yhat - coal_train)
@@ -722,7 +570,7 @@ checkresiduals(coal_df_prophet$residuals)
 ```
 ### Cross Validation
 
-```{r petro_cv, echo=TRUE, eval=FALSE}
+```{r coal_cv, echo=TRUE, eval=FALSE}
 
 # Create function to calculate RMSE
 calc_rmse <- function(actual, predicted) {
