@@ -538,54 +538,54 @@ for (year in start_year:end_year) {
   tryCatch({
     sarima_mod <- sarima(xdata = train, p = 7, d = 2, q = 1, P = 2, D = 1, Q = 1, S = 12)
     sarima_aics <- c(sarima_aics, sarima_mod$fit$aic)
-    sarima_pred <- sarima.for(xdata = train, n.ahead = 12, p = 12, d = 1, q = 2, P = 1, D = 1, Q = 1, S = 12)$pred
+    sarima_pred <- sarima.for(xdata = train, n.ahead = 12, p = 7, d = 2, q = 1, P = 2, D = 1, Q = 1, S = 12)$pred
     sarima_rmses <- c(sarima_rmses, calc_rmse(actual, sarima_pred))
   }, error = function(e) {
     message("SARIMA model fitting failed: ", e)
   })
 
-  # 1b. Fit auto SARIMA model
-  tryCatch({
-    auto_sarima_model <- auto.arima(train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift=TRUE)
-    auto_sarima_aics <- c(auto_sarima_aics, auto_sarima_model$aic)
-    auto_sarima_pred <- forecast(auto_sarima_model, h=12)$mean
-    auto_sarima_rmses <- c(auto_sarima_rmses, calc_rmse(actual, auto_sarima_pred))
-  }, error = function(e) {
-    message("Auto SARIMA model fitting failed: ", e)
-  })
-
-  # 2. Fit ETS model
-  tryCatch({
-    ets_model <- ets(train, model="MAM", damped=TRUE)
-    ets_aics <- c(ets_aics, ets_model$aic)
-    ets_pred <- forecast(ets_model, h=12)$mean
-    ets_rmses <- c(ets_rmses, calc_rmse(actual, ets_pred))
-  }, error = function(e) {
-    message("ETS model fitting failed: ", e)
-  })
-
-  # 3. Fit Prophet model
-  tryCatch({
-    # note, no AIC since Prophet is Bayesian
-    prophet_df <- data.frame(ds=as.Date(time(train)), y=as.numeric(train))
-    m <- prophet(prophet_df, yearly.seasonality=TRUE, weekly.seasonality=TRUE, daily.seasonality=TRUE, seasonality.mode="multiplicative", holidays=df_holiday)
-    future <- make_future_dataframe(m, periods=12, freq="month")
-    prophet_forecast <- predict(m, future)
-    prophet_pred <- tail(prophet_forecast$yhat, 12)
-    prophet_rmses <- c(prophet_rmses, calc_rmse(actual, prophet_pred))
-  }, error = function(e) {
-    message("Prophet model fitting failed: ", e)
-  })
-  
-  # 4. Fit TBATS model
-  tryCatch({
-    tbats_model <- tbats(train)
-    tbats_pred <- forecast(tbats_model, h=12)$mean
-    tbats_rmses <- c(tbats_rmses, calc_rmse(actual, tbats_pred))
-    tbats_aics <- c(tbats_aics, tbats_model$AIC)
-  }, error = function(e) {
-    message("TBATS model fitting failed: ", e)
-  })
+  # # 1b. Fit auto SARIMA model
+  # tryCatch({
+  #   auto_sarima_model <- auto.arima(train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift=TRUE)
+  #   auto_sarima_aics <- c(auto_sarima_aics, auto_sarima_model$aic)
+  #   auto_sarima_pred <- forecast(auto_sarima_model, h=12)$mean
+  #   auto_sarima_rmses <- c(auto_sarima_rmses, calc_rmse(actual, auto_sarima_pred))
+  # }, error = function(e) {
+  #   message("Auto SARIMA model fitting failed: ", e)
+  # })
+  # 
+  # # 2. Fit ETS model
+  # tryCatch({
+  #   ets_model <- ets(train, model="MAM", damped=TRUE)
+  #   ets_aics <- c(ets_aics, ets_model$aic)
+  #   ets_pred <- forecast(ets_model, h=12)$mean
+  #   ets_rmses <- c(ets_rmses, calc_rmse(actual, ets_pred))
+  # }, error = function(e) {
+  #   message("ETS model fitting failed: ", e)
+  # })
+  # 
+  # # 3. Fit Prophet model
+  # tryCatch({
+  #   # note, no AIC since Prophet is Bayesian
+  #   prophet_df <- data.frame(ds=as.Date(time(train)), y=as.numeric(train))
+  #   m <- prophet(prophet_df, yearly.seasonality=TRUE, weekly.seasonality=TRUE, daily.seasonality=TRUE, seasonality.mode="multiplicative", holidays=df_holiday)
+  #   future <- make_future_dataframe(m, periods=12, freq="month")
+  #   prophet_forecast <- predict(m, future)
+  #   prophet_pred <- tail(prophet_forecast$yhat, 12)
+  #   prophet_rmses <- c(prophet_rmses, calc_rmse(actual, prophet_pred))
+  # }, error = function(e) {
+  #   message("Prophet model fitting failed: ", e)
+  # })
+  # 
+  # # 4. Fit TBATS model
+  # tryCatch({
+  #   tbats_model <- tbats(train)
+  #   tbats_pred <- forecast(tbats_model, h=12)$mean
+  #   tbats_rmses <- c(tbats_rmses, calc_rmse(actual, tbats_pred))
+  #   tbats_aics <- c(tbats_aics, tbats_model$AIC)
+  # }, error = function(e) {
+  #   message("TBATS model fitting failed: ", e)
+  # })
   
 }
 
@@ -601,6 +601,31 @@ cat("SARIMA avg. AIC:", mean(sarima_aics),
     "\nETS avg. AIC:", mean(ets_aics),
     "\nTBATS avg. AIC:", mean(tbats_aics))
 ```
+Plot sarima model along with the actual data
+```{r petro_sarima_plot, echo=TRUE}
+sarima_result <- sarima.for(xdata = ts_data, n.ahead = 49, p = 7, d = 2, q = 1, P = 2, D = 1, Q = 1, S = 12)
+sarima_pred <- sarima_result$pred
+sarima_upper = sarima_result$pred + 1.96 * sarima_result$se
+sarima_lower = sarima_result$pred - 1.96 * sarima_result$se
+
+# ggplot the forecasted values with the actual data
+
+data_df <- data.frame(time=as.Date(time(gas_ts)), value=as.numeric(gas_ts))
+  
+pred_df <- data.frame(
+  time = seq.Date(from = as.Date("2020-03-01"), by = "month", length.out = length(sarima_pred)),
+  pred = sarima_pred,
+  upper = sarima_upper,
+  lower = sarima_lower
+)
+ggplot() +
+  geom_line(data = data_df, aes(x = time, y = value), color = 'darkgrey', size = 1) +
+  geom_line(data = pred_df, aes(x = time, y = pred), color = 'green', size = 1, alpha=0.7) +
+  geom_ribbon(data = pred_df, aes(x = time, ymin = lower, ymax = upper), alpha = 0.2, fill = 'red') +
+  labs(title = 'Natural Gas Delivered to Consumers in the US with SARIMA Predictions', x = 'Time', y = 'Value') +
+  theme_minimal()
+
+
 ```
 
 ## Fitting coal models
