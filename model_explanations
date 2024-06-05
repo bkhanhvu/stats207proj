@@ -38,14 +38,10 @@ IV. TBATS Model
   2. Trigometric Seasonality: captures the periodic or recurring patterns in the time series. Uses trigonometric functions (Fourier terms) to model complex seasonal patterns. It can handle multiple seasonal periods and non-integer seasonality.
   4. Box-Cox transformation: applies Box-Cox transformation that stabilizes the variance of the time series. It can handle non-constant variance and improve the model's performance.
   5. ARMA Errors : an autoregressive moving average model that captures the autocorrelations in the residuals after accounting for the trend and seasonality.
-  6. Seasonal Components: can captures multiple seasonal periods and irregular seasonal patterns. Each component is modeled using trigonometric functions (Fourier terms) to capture complex seasonal patterns.
-  
+  6. Seasonal Components: can captures multiple seasonal periods and irregular seasonal patterns. Each component is modeled using trigonometric functions (Fourier terms) to capture complex seasonal patterns
   Auto-ARIMA is applied to the residuals of the TBATS model to capture any remaining autocorrelations in the time series and determine the best ARIMA order. 
-  
 -> Model Evaluation: Final model chosen using AIC. 
-
 -> Pros: Can handle multiple complex seasonalities that SARIMA/ETS/Prophet might struggle with. Highly flexible: can adapt to a wide range of seasonality patterns, non-linear trends, and autocorrelation structures in residual. Robust to missing values and outliers. Can handle non-constant variance by applying Box-Cox transformation and reduce impact of outliers. Reliable in forecasting irregular time series patterns.
-
 -> Cons: More complex and computationally intensive than ETS and Prophet. Less interpretable and prone to overfitting due to the high number of parameters.
 
 
