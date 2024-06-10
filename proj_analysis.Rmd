@@ -435,9 +435,9 @@ ggplot() +
 # get test error between post-2020 data and the forecasted values
 petro_forecast <- sarima.for(xdata = ts_data, n.ahead = 25, p = 12, d = 1, q = 2, P = 1, D = 1, Q = 1, S = 12)
 
-petro_rmse <- calc_rmse(petroleum_test, petro_forecast$pred)
+petro_test_rmse <- calc_rmse(petroleum_test, petro_forecast$pred)
 
-cat("RMSE for petroleum forecast:", petro_rmse)
+cat("RMSE for petroleum forecast:", petro_test_rmse)
 
 ```
 
@@ -454,6 +454,7 @@ summary(gas_sarima)
 
 checkresiduals(gas_sarima$fit$residuals)
 ```
+
 ```{r gas_test_error, echo=TRUE}
 # get test error between post-2020 data and the forecasted values
 ts_data <- gas_train
@@ -829,3 +830,32 @@ coal_test_rmse <- sqrt(mean((sarima_forecast$mean - coal_test)^2))
 
 cat("Test RMSE:", coal_test_rmse)
 ```
+
+# Conclusion
+
+```{r combine_tests, echo=TRUE}
+library(gridExtra)
+
+# Combine RMSE test results coal_test_rmse, gas_test_error, petro_test_rmse
+
+test_errors <- c(coal_test_rmse, gas_test_error, petro_test_rmse)
+
+# Create a data frame with the test errors
+test_errors_df <- data.frame(fuel = c("Coal", "Gas", "Petroleum"), rmse = test_errors)
+
+# Plot the test errors
+ggplot(test_errors_df, aes(x = fuel, y = rmse)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Test RMSE for Different Fuels",
+       x = "Fuel",
+       y = "RMSE")
+
+# print table 
+test_errors_df
+
+pander::pander(test_errors_df)
+
+
+```
+
+
