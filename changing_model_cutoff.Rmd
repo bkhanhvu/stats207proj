@@ -1,0 +1,818 @@
+---
+title: "STATS207 Project Analysis"
+output: html_document
+date: "2024-06-04"
+---
+
+```{r}
+library(tidyverse)
+library(zoo)
+library(httr)
+library(jsonlite)
+library(astsa)
+library(forecast)
+library(tseries)
+library(prophet)
+```
+# Data Fetching
+
+```{r}
+# Define API key
+api_key <- "gymyk63by4IgrjFeoHZX606z9kwWdWhUhdO8zs9M"
+
+get_data_for_year <- function(base_url, api_key, extra_params) {
+  full_url <- paste0(base_url, "?api_key=", api_key, extra_params)
+  response <- GET(full_url)
+  
+  if (status_code(response) == 200) {
+    data <- content(response, "text", encoding = "UTF-8")
+    json_data <- fromJSON(data)
+    return(json_data$response$data)
+  } else {
+    return(NULL)
+  }
+}
+base_url_gas <- "https://api.eia.gov/v2/natural-gas/cons/sum/data/"
+extra_params_gas <- "&frequency=monthly&data[0]=value&facets[duoarea][]=NUS&facets[process][]=VCS&facets[process][]=VIN&facets[process][]=VRS&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=5000"
+gas_raw <- get_data_for_year(base_url_gas, api_key, extra_params_gas)
+
+base_url_coal <- "https://api.eia.gov/v2/coal/consumption-and-quality/data/"
+extra_params_coal <- "&frequency=quarterly&data[0]=consumption&facets[location][]=US&facets[sector][]=8&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=5000"
+coal_raw <- get_data_for_year(base_url_coal, api_key, extra_params_coal)
+
+# U.S. Regular Gasoline All Sales/Deliveries by Prime Supplier (Thousand Gallons per Day)
+base_url_pet <- "https://api.eia.gov/v2/petroleum/cons/prim/data/"
+extra_params_pet <- "&frequency=monthly&data[0]=value&facets[duoarea][]=NUS&facets[product][]=EPMR&facets[series][]=C120000001&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=5000"
+petroleum_raw <- get_data_for_year(base_url_pet, api_key, extra_params_pet)
+
+# possible extension to Consumption of Fuels for Electricity Generation and Useful Thermal Output
+base_url_electricity <- "https://api.eia.gov/v2/electricity/retail/data/"
+
+```
+
+# Data Cleaning
+## Petroleum
+```{r}
+petroleum <- petroleum_raw %>%
+  select(period, value) %>%
+  mutate(period = as.Date(as.yearmon(period)))%>%
+  mutate(value = as.numeric(value))
+
+ggplot(data = petroleum, aes( period, value )) + 
+  geom_line() +
+  theme_classic() +
+  ylab("Gasoline Deliveries in the US (MMgal/day)")+
+  xlab("Date")+
+  geom_vline(xintercept = as.Date("2020-03-01"), color= "red") +
+  geom_vline(xintercept = as.Date("2019-07-01"), color = "blue", linetype = "dashed") +
+  ggtitle("Gasoline Consumption from 1983 to 2022")
+```
+
+## Coal
+```{r}
+coal <- coal_raw %>%
+  select(period, consumption) %>%
+  mutate(
+    year = as.numeric(substring(period, 1, 4)),
+    quarter = substring(period, 6, 7),
+    month = case_when(
+      quarter == "Q1" ~ 1,
+      quarter == "Q2" ~ 4,
+      quarter == "Q3" ~ 7,
+      quarter == "Q4" ~ 10
+    ),
+    period = as.Date(paste(year, month, "01", sep = "-"))
+  ) %>%
+  select(-year, -quarter, -month) %>%
+  mutate(consumption = as.numeric(consumption))
+
+ggplot(data = coal, aes( period, consumption )) + 
+  geom_line() +
+  theme_classic() +
+  ylab("Coal Commercial/Industrial Consumption in the US")+
+  xlab("Date")+
+  geom_vline(xintercept = as.Date("2020-03-01"), color= "red")+
+  geom_rect(aes(xmin=as.Date("2000-01-01"), xmax=as.Date("2008-01-01"), ymin=0, ymax=Inf), alpha = 0.01)
+
+coal <- coal %>%
+  filter(period >= as.Date("2008-01-01"))
+
+coal$consumption <- log(coal$consumption)
+
+ggplot(data = coal, aes( period, consumption )) + 
+  geom_line() +
+  theme_classic() +
+  ylab("Log Coal Commercial/Industrial Consumption in the US")+
+  xlab("Date")+
+  geom_vline(xintercept = as.Date("2020-03-01"), color= "red") +
+  geom_vline(xintercept = as.Date("2019-07-01"), color = "blue", linetype = "dashed") +
+  ggtitle("Quarterly Coal Consumption, Log-Transformed, from 2008 to 2023")
+
+#+
+  #geom_rect(aes(xmin=as.Date("2000-01-01"), xmax=as.Date("2008-01-01"), ymin=0, ymax=Inf), alpha = 0.01)
+
+```
+
+## Natural Gas
+```{r}
+gas <- gas_raw %>%
+  mutate(period = as.Date(as.yearmon(period))) %>%
+  filter(gas_raw$`series-description` == "Natural Gas Deliveries to Commercial Consumers (Including Vehicle Fuel through 1996) in the U.S. (MMcf)") %>%
+  select(c(period, value))  %>%
+  mutate(value = as.numeric(value))
+
+# Log-Transformed 
+
+gas$value <- log(gas$value)
+
+ggplot(data = gas, aes( period, value )) + 
+  geom_line() +
+  theme_classic() +
+  ylab("Log Natural Gas Delivered to Consumers in the US")+
+  xlab("Date")+
+  geom_vline(xintercept = as.Date("2020-03-01"), color= "red") +
+  geom_vline(xintercept = as.Date("2019-07-01"), color = "blue", linetype = "dashed") +
+  ggtitle("Natural Gas Consumption, Log-Transformed, from 1973 to 2024")
+
+# ggplot(data = gas, aes( period, value )) + 
+#   geom_line() +
+#   theme_classic() +
+#   ylab("Natural Gas Delivered to Consumers in the US")+
+#   xlab("Date")+
+#   geom_vline(xintercept = as.Date("2020-03-01"), color= "red") +
+#   geom_vline(xintercept = as.Date("2019-07-01"), color = "blue", linetype = "dashed")
+```
+## Check completeness
+```{r}
+# Extract year and count occurrences per year
+yearly_counts <- gas %>%
+  mutate(year = format(period, "%Y")) %>%
+  group_by(year) %>%
+  summarise(count = n())
+
+# Check if every year has 12 points
+(yearly_counts$count == 12)
+
+# Extract year and count occurrences per year
+yearly_counts <- coal %>%
+  mutate(year = format(period, "%Y")) %>%
+  group_by(year) %>%
+  summarise(count = n())
+
+# Check if every year has 4 points
+(yearly_counts$count == 4)
+
+# Extract year and count occurrences per year
+yearly_counts <- petroleum %>%
+  mutate(year = format(period, "%Y")) %>%
+  group_by(year) %>%
+  summarise(count = n())
+
+# Check if every year has 12 points
+yearly_counts$count == 12
+```
+
+Yes, all years have 12 points, except for last year for gas and petroleum
+
+# Data Analysis
+## Restrict datasets to train only
+```{r}
+# separate train, validate, and test for each dataset
+
+# coal is quarterly
+coal_full <- coal[order(coal$period), ]
+coal_ts <- ts(coal_full$consumption, start = c(2008, 1), frequency = 4)
+coal_train <- window(coal_ts, end = c(2020, 1)) # changed from 2020-2 to 2019-7
+# coal_validate <- window(coal_ts, start = c(2019, 3), end = c(2020, 1))
+coal_test <- window(coal_ts, start = c(2020, 2))
+
+# previous df approach for coal
+# coal_train <- coal_full %>%
+#   filter(period < "2020-03-01")
+# coal_test <- coal_full %>%
+#   filter(period >= "2020-03-01")
+
+
+petroleum_full <- petroleum[order(petroleum$period), ]
+petroleum_ts <- ts(petroleum_full$value, start = c(1983, 1), frequency = 12)
+petroleum_train <- window(petroleum_ts, end = c(2020, 2))
+# petroleum_validate <- window(petroleum_ts, start = c(2019, 7), end = c(2020, 2))
+petroleum_test <- window(petroleum_ts, start = c(2020, 3))
+
+# previous df approach for petroleum
+# petroleum_train <- petroleum_full %>%
+#   filter(period < "2020-03-01")
+# petroleum_test <- petroleum_full %>% 
+#   filter(period >= "2020-03-01")
+
+gas_full <- gas[order(gas$period), ]
+gas_ts <- ts(gas_full$value, start = c(1973, 1), frequency = 12)
+gas_train <- window(gas_ts, end = c(2020, 2))
+# gas_validate <- window(gas_ts, start = c(2019, 7), end = c(2020, 2))
+gas_test <- window(gas_ts, start = c(2020, 3))
+
+# previous df approach for gas
+# gas_train <- gas_full %>%
+#   filter(period < "2020-03-01")
+# gas_test <- gas_full %>%
+#   filter(period >= "2020-03-01")
+```
+
+## Fitting petroleum models
+```{r petro_plot_og, echo=TRUE}
+
+plot(petroleum_train)
+acf2(petroleum_train) 
+```
+
+```{r petro_plot_piecewise, echo=TRUE}
+petroleum_piecewise <- stl(petroleum_train, s.window = "periodic")
+plot(petroleum_piecewise)
+```
+
+### Model 1: Manual SARIMA(4,2,1)(3,1,1)_12
+```{r petro_plot_sarima, echo=TRUE}
+petroleum_sarima <- sarima(petroleum_train, p = 12, d = 1, q = 2, P = 1, D = 1, Q = 1, S = 12)
+petroleum_sarima
+
+checkresiduals(petroleum_sarima$fit$residuals)
+
+# check auto correlation of residuals
+acf2(petroleum_sarima$fit$residuals)
+```
+```{r petro_sarima_forecast, echo=TRUE}
+petroleum_forecast <- sarima.for(xdata = petroleum_train, n.ahead = 9, p = 12, d = 1, q = 2, P = 1, D = 1, Q = 1, S = 12, plot = TRUE)
+```
+
+### Model 2: Auto SARIMA
+```{r petro_auto_sarima, echo=TRUE}
+sarima_model <- auto.arima(petroleum_train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift = TRUE)
+sarima_forecast <- forecast(sarima_model, h=length(petroleum_test))
+autoplot(sarima_forecast)
+```
+
+```{r petro_auto_arima_plot, echo=TRUE}
+summary(sarima_model)
+checkresiduals(sarima_model)
+
+```
+
+### Model 3: ETS
+```{r petro_ets, echo=TRUE}
+ets_model <- ets(petroleum_train, model="MAM", damped=TRUE)
+ets_forecast <- forecast(ets_model, h=length(petroleum_test))
+plot(ets_forecast)
+```
+
+```{r petro_ets_plot, echo=TRUE}
+summary(ets_model)
+plot(ets_model)
+checkresiduals(ets_model)
+```
+
+### Model 4: TBATS
+```{r petro_tbats, echo=TRUE}
+tbats_model <- tbats(petroleum_train, seasonal.periods = 12)
+tbats_forecast <- forecast(tbats_model, h=length(petroleum_test))
+plot(tbats_forecast)
+```
+
+```{r petro_tbats_plot, echo=TRUE}
+plot(tbats_model)
+checkresiduals(tbats_model)
+```
+### Prophet Model
+```{r petro_prophet, echo=TRUE}
+
+petroleum_prophet_df <- petroleum_train %>%
+  data.frame(ds = as.Date(time(petroleum_train)), y = petroleum_train)
+
+# create holidays for prophet
+df_holiday <- petroleum_prophet_df %>% mutate(holiday = ifelse(format(ds, "%m-%d") == "01-01", "newyear",
+                                                               ifelse(format(ds, "%m-%d") == "07-04", "independence",
+                                                                      ifelse(format(ds, "%m-%d") == "12-25", "christmas", NA))) ) %>% select(holiday, ds)
+
+df_holiday <- df_holiday %>% filter(!is.na(holiday))
+
+petroleum_prophet <- prophet(petroleum_prophet_df, holidays = df_holiday, yearly.seasonality = TRUE, weekly.seasonality = TRUE, daily.seasonality = TRUE, seasonality.mode = "multiplicative")
+
+future <- make_future_dataframe(petroleum_prophet, periods = 20, freq = "month")
+petroleum_forecast <- predict(petroleum_prophet, future)
+plot(petroleum_prophet, petroleum_forecast)
+```
+
+```{r petro_prophet_plot, echo=TRUE}
+petro_df_prophet <- head(petroleum_forecast, 438)
+petro_df_prophet <- petro_df_prophet %>%
+  mutate(period = ds, value = yhat, residuals = yhat - petroleum_train)
+
+checkresiduals(petro_df_prophet$residuals)
+```
+### Cross Validation
+
+```{r petro_cv, echo=TRUE, eval=FALSE}
+
+# Create function to calculate RMSE
+calc_rmse <- function(actual, predicted) {
+  sqrt(mean((actual - predicted)^2))
+}
+
+# Load the data
+ts_data <- petroleum_train
+
+# Define the rolling window parameters
+start_year <- 1983
+end_year <- 2019
+step_size <- 12 # Number of steps to forecast ahead
+year = start_year
+# Initialize vectors to store RMSE values
+sarima_rmses <- c()
+auto_sarima_rmses <- c()
+ets_rmses <- c()
+prophet_rmses <- c()
+tbats_rmses <- c()
+
+sarima_aics <- c()
+auto_sarima_aics <- c()
+ets_aics <- c()
+tbats_aics <- c()
+
+# Perform rolling window cross-validation
+# Loop through the years
+for (year in start_year:end_year) {
+  
+  # Define train and validation sets
+  train_end <- c(year , 12)
+  val_start <- c(year + 1, 1)
+  val_end <- c(year + 1, 12)
+  
+  train <- window(ts_data, end=train_end)
+  actual <- window(ts_data, start=val_start, end=val_end)
+
+  # 1. Fit SARIMA model
+  tryCatch({
+    sarima_mod <- sarima(xdata = train, p = 12, d = 1, q = 2, P = 1, D = 1, Q = 1, S = 12)
+    sarima_aics <- c(sarima_aics, sarima_mod$fit$aic)
+    sarima_pred <- sarima.for(xdata = train, n.ahead = 12, p = 12, d = 1, q = 2, P = 1, D = 1, Q = 1, S = 12)$pred
+    sarima_rmses <- c(sarima_rmses, calc_rmse(actual, sarima_pred))
+  }, error = function(e) {
+    message("SARIMA model fitting failed: ", e)
+  })
+
+  # 1b. Fit auto SARIMA model
+  tryCatch({
+    auto_sarima_model <- auto.arima(train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift=TRUE)
+    auto_sarima_aics <- c(auto_sarima_aics, auto_sarima_model$aic)
+    auto_sarima_pred <- forecast(auto_sarima_model, h=12)$mean
+    auto_sarima_rmses <- c(auto_sarima_rmses, calc_rmse(actual, auto_sarima_pred))
+  }, error = function(e) {
+    message("Auto SARIMA model fitting failed: ", e)
+  })
+
+  # 2. Fit ETS model
+  tryCatch({
+    ets_model <- ets(train, model="MAM", damped=TRUE)
+    ets_aics <- c(ets_aics, ets_model$aic)
+    ets_pred <- forecast(ets_model, h=12)$mean
+    ets_rmses <- c(ets_rmses, calc_rmse(actual, ets_pred))
+  }, error = function(e) {
+    message("ETS model fitting failed: ", e)
+  })
+
+  # 3. Fit Prophet model
+  tryCatch({
+    # note, no AIC since Prophet is Bayesian
+    prophet_df <- data.frame(ds=as.Date(time(train)), y=as.numeric(train))
+    m <- prophet(prophet_df, yearly.seasonality=TRUE, weekly.seasonality=TRUE, daily.seasonality=TRUE, seasonality.mode="multiplicative", holidays=df_holiday)
+    future <- make_future_dataframe(m, periods=12, freq="month")
+    prophet_forecast <- predict(m, future)
+    prophet_pred <- tail(prophet_forecast$yhat, 12)
+    prophet_rmses <- c(prophet_rmses, calc_rmse(actual, prophet_pred))
+  }, error = function(e) {
+    message("Prophet model fitting failed: ", e)
+  })
+
+  # 4. Fit TBATS model
+  tryCatch({
+    tbats_model <- tbats(train)
+    tbats_pred <- forecast(tbats_model, h=12)$mean
+    tbats_rmses <- c(tbats_rmses, calc_rmse(actual, tbats_pred))
+    tbats_aics <- c(tbats_aics, tbats_model$AIC)
+  }, error = function(e) {
+    message("TBATS model fitting failed: ", e)
+  })
+  
+}
+
+# Compare cross-validated performance
+cat("SARIMA avg. RMSE:", mean(sarima_rmses), 
+    "\nAuto SARIMA avg. RMSE:", mean(auto_sarima_rmses),
+    "\nETS avg. RMSE:", mean(ets_rmses),
+    "\nProphet avg. RMSE:", mean(prophet_rmses),
+    "\nTBATS avg. RMSE:", mean(tbats_rmses))
+
+cat("SARIMA avg. AIC:", mean(sarima_aics), 
+    "\nAuto SARIMA avg. AIC:", mean(auto_sarima_aics),
+    "\nETS avg. AIC:", mean(ets_aics),
+    "\nTBATS avg. AIC:", mean(tbats_aics))
+```
+
+
+Plot sarima model along with the actual data
+```{r petro_sarima_plot, echo=TRUE}
+sarima_result <- sarima.for(xdata = ts_data, n.ahead = 25, p = 12, d = 1, q = 2, P = 1, D = 1, Q = 1, S = 12)
+sarima_pred <- sarima_result$pred
+sarima_upper = sarima_result$pred + 1.96 * sarima_result$se
+sarima_lower = sarima_result$pred - 1.96 * sarima_result$se
+
+# ggplot the forecasted values with the actual data
+
+data_df <- data.frame(time=as.Date(time(petroleum_ts)), value=as.numeric(petroleum_ts))
+  
+pred_df <- data.frame(
+  time = seq.Date(from = as.Date("2020-03-01"), by = "month", length.out = length(sarima_pred)),
+  pred = sarima_pred,
+  upper = sarima_upper,
+  lower = sarima_lower
+)
+ggplot() +
+  geom_line(data = data_df, aes(x = time, y = value), color = 'blue', size = 1) +
+  geom_line(data = pred_df, aes(x = time, y = pred), color = 'red', size = 1) +
+  geom_ribbon(data = pred_df, aes(x = time, ymin = lower, ymax = upper), alpha = 0.2, fill = 'red') +
+  labs(title = 'Time Series with SARIMA Predictions', x = 'Time', y = 'Value') +
+  theme_minimal()
+
+
+```
+
+#########################################################################################################################
+## FITTING NATURAL GAS MODELS
+#########################################################################################################################
+```{r ng_plot_og, echo=TRUE}
+plot(gas_train)
+acf2(gas_train) 
+```
+
+### Model 1: Manual SARIMA(2,2,1)(2,1,1)_12
+```{r gas_plot_sarima, echo=TRUE}
+gas_sarima <- sarima(gas_train, p = 7, d = 2, q = 1, P = 2, D = 1, Q = 1, S = 12)
+gas_sarima
+summary(gas_sarima)
+
+checkresiduals(gas_sarima$fit$residuals)
+```
+```{r gas_sarima_forecast, echo=TRUE}
+stl_decomp <- stl(gas_train, s.window = "periodic")
+autoplot(stl_decomp)
+
+gas_forecast <- sarima.for(xdata = gas_train, n.ahead = 20, p = 7, d = 2, q = 1, P = 2, D = 1, Q = 1, S = 12, plot = TRUE)
+```
+
+### Model 2: Auto SARIMA
+```{r gas_auto_sarima, echo=TRUE}
+sarima_model <- auto.arima(gas_train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift = FALSE)
+sarima_forecast <- forecast(sarima_model, h=length(gas_test))
+autoplot(sarima_forecast)
+```
+```{r gas_auto_arima_plot, echo=TRUE}
+summary(sarima_model)
+checkresiduals(sarima_model)
+
+```
+
+### Model 3: ETS
+```{r gas_ets, echo=TRUE}
+ets_model <- ets(gas_train, model="MAM", damped=TRUE)
+ets_forecast <- forecast(ets_model, h=length(gas_test))
+plot(ets_forecast)
+```
+
+```{r gas_ets_plot, echo=TRUE}
+summary(ets_model)
+checkresiduals(ets_model)
+```
+
+### Model 4: TBATS
+```{r gas_tbats, echo=TRUE}
+tbats_model <- tbats(gas_train)
+tbats_forecast <- forecast(tbats_model, h=length(gas_test))
+plot(tbats_forecast)
+```
+
+```{r gas_tbats_plot, echo=TRUE}
+summary(tbats_model)
+checkresiduals(tbats_model)
+```
+### Prophet Model
+```{r gas_prophet, echo=TRUE}
+
+gas_prophet_df <- gas_train %>%
+  data.frame(ds = as.Date(time(gas_train)), y = gas_train)
+
+gas_prophet <- prophet(gas_prophet_df)
+
+future <- make_future_dataframe(gas_prophet, periods = 20, freq = "month")
+gas_forecast <- predict(gas_prophet, future)
+plot(gas_prophet, gas_forecast)
+```
+
+```{r gas_prophet_plot, echo=TRUE}
+gas_df_prophet <- head(gas_forecast, 566) # debug
+gas_df_prophet <- gas_df_prophet %>%
+  mutate(period = ds, value = yhat, residuals = yhat - gas_train)
+
+checkresiduals(gas_df_prophet$residuals)
+```
+### Cross Validation
+
+```{r gas_cv, echo=TRUE, eval=FALSE}
+
+# Create function to calculate RMSE
+calc_rmse <- function(actual, predicted) {
+  sqrt(mean((actual - predicted)^2))
+}
+
+# Load the data
+ts_data <- gas_train
+
+# Define the rolling window parameters
+start_year <- 1973
+end_year <- 2019 
+step_size <- 12 # Number of steps to forecast ahead
+year = start_year
+# Initialize vectors to store RMSE values
+sarima_rmses <- c()
+auto_sarima_rmses <- c()
+ets_rmses <- c()
+prophet_rmses <- c()
+tbats_rmses <- c()
+
+sarima_aics <- c()
+auto_sarima_aics <- c()
+ets_aics <- c()
+tbat_aics <- c()
+
+# Perform rolling window cross-validation
+# Loop through the years
+for (year in start_year:end_year) {
+  
+  # Define train and validation sets
+  train_end <- c(year , 12)
+  val_start <- c(year + 1, 1)
+  val_end <- c(year + 1, 12)
+  
+  train <- window(ts_data, end=train_end)
+  actual <- window(ts_data, start=val_start, end=val_end)
+  
+  # 1. Fit SARIMA model
+  tryCatch({
+    sarima_mod <- sarima(xdata = train, p = 7, d = 2, q = 1, P = 2, D = 1, Q = 1, S = 12)
+    sarima_aics <- c(sarima_aics, sarima_mod$fit$aic)
+    sarima_pred <- sarima.for(xdata = train, n.ahead = 12, p = 7, d = 2, q = 1, P = 2, D = 1, Q = 1, S = 12)$pred
+    sarima_rmses <- c(sarima_rmses, calc_rmse(actual, sarima_pred))
+  }, error = function(e) {
+    message("SARIMA model fitting failed: ", e)
+  })
+
+  # 1b. Fit auto SARIMA model
+  tryCatch({
+    auto_sarima_model <- auto.arima(train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift=TRUE)
+    auto_sarima_aics <- c(auto_sarima_aics, auto_sarima_model$aic)
+    auto_sarima_pred <- forecast(auto_sarima_model, h=12)$mean
+    auto_sarima_rmses <- c(auto_sarima_rmses, calc_rmse(actual, auto_sarima_pred))
+  }, error = function(e) {
+    message("Auto SARIMA model fitting failed: ", e)
+  })
+
+  # 2. Fit ETS model
+  tryCatch({
+    ets_model <- ets(train, model="MAM", damped=TRUE)
+    ets_aics <- c(ets_aics, ets_model$aic)
+    ets_pred <- forecast(ets_model, h=12)$mean
+    ets_rmses <- c(ets_rmses, calc_rmse(actual, ets_pred))
+  }, error = function(e) {
+    message("ETS model fitting failed: ", e)
+  })
+
+  # 3. Fit Prophet model
+  tryCatch({
+    # note, no AIC since Prophet is Bayesian
+    prophet_df <- data.frame(ds=as.Date(time(train)), y=as.numeric(train))
+    m <- prophet(prophet_df, yearly.seasonality=TRUE, weekly.seasonality=TRUE, daily.seasonality=TRUE, seasonality.mode="multiplicative", holidays=df_holiday)
+    future <- make_future_dataframe(m, periods=12, freq="month")
+    prophet_forecast <- predict(m, future)
+    prophet_pred <- tail(prophet_forecast$yhat, 12)
+    prophet_rmses <- c(prophet_rmses, calc_rmse(actual, prophet_pred))
+  }, error = function(e) {
+    message("Prophet model fitting failed: ", e)
+  })
+
+  # 4. Fit TBATS model
+  tryCatch({
+    tbats_model <- tbats(train)
+    tbats_pred <- forecast(tbats_model, h=12)$mean
+    tbats_rmses <- c(tbats_rmses, calc_rmse(actual, tbats_pred))
+    tbats_aics <- c(tbats_aics, tbats_model$AIC)
+  }, error = function(e) {
+    message("TBATS model fitting failed: ", e)
+  })
+  
+}
+
+# Compare cross-validated performance
+cat("SARIMA avg. RMSE:", mean(sarima_rmses), 
+    "\nAuto SARIMA avg. RMSE:", mean(auto_sarima_rmses),
+    "\nETS avg. RMSE:", mean(ets_rmses),
+    "\nProphet avg. RMSE:", mean(prophet_rmses),
+    "\nTBATS avg. RMSE:", mean(tbats_rmses))
+
+cat("SARIMA avg. AIC:", mean(sarima_aics), 
+    "\nAuto SARIMA avg. AIC:", mean(auto_sarima_aics),
+    "\nETS avg. AIC:", mean(ets_aics),
+    "\nTBATS avg. AIC:", mean(tbats_aics))
+```
+Plot sarima model along with the actual data
+```{r petro_sarima_plot, echo=TRUE}
+sarima_result <- sarima.for(xdata = ts_data, n.ahead = 49, p = 7, d = 2, q = 1, P = 2, D = 1, Q = 1, S = 12)
+sarima_pred <- sarima_result$pred
+sarima_upper = sarima_result$pred + 1.96 * sarima_result$se
+sarima_lower = sarima_result$pred - 1.96 * sarima_result$se
+
+# ggplot the forecasted values with the actual data
+
+data_df <- data.frame(time=as.Date(time(gas_ts)), value=as.numeric(gas_ts))
+  
+pred_df <- data.frame(
+  time = seq.Date(from = as.Date("2020-03-01"), by = "month", length.out = length(sarima_pred)),
+  pred = sarima_pred,
+  upper = sarima_upper,
+  lower = sarima_lower
+)
+ggplot() +
+  geom_line(data = data_df, aes(x = time, y = value), color = 'darkgrey', size = 1) +
+  geom_line(data = pred_df, aes(x = time, y = pred), color = 'green', size = 1, alpha=0.7) +
+  geom_ribbon(data = pred_df, aes(x = time, ymin = lower, ymax = upper), alpha = 0.2, fill = 'red') +
+  labs(title = 'Natural Gas Delivered to Consumers in the US with SARIMA Predictions', x = 'Time', y = 'Value') +
+  theme_minimal()
+
+
+```
+
+## Fitting coal models
+```{r petro_plot_og, echo=TRUE}
+
+plot(coal_train)
+acf2(coal_train) 
+```
+### Model 1: Manual SARIMA(2, 0, 0)(1, 1, 0)_4
+```{r coal_plot_sarima, echo=TRUE}
+coal_sarima <- sarima(coal_train, p = 2, d = 0, q = 0, P = 1, D = 1, Q = 0, S = 4)
+coal_sarima
+
+checkresiduals(coal_sarima$fit$residuals)
+```
+```{r coal_sarima_forecast, echo=TRUE}
+coal_forecast <- sarima.for(xdata = coal_train, n.ahead = 20, p = 2, d = 0, q = 0, P = 1, D = 1, Q = 0, S = 4, plot = TRUE)
+```
+
+### Model 2: Auto SARIMA
+```{r coal_auto_sarima, echo=TRUE}
+sarima_model <- auto.arima(coal_train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift = TRUE)
+sarima_forecast <- forecast(sarima_model, h=length(coal_test))
+autoplot(sarima_forecast)
+```
+```{r coal_auto_arima_plot, echo=TRUE}
+summary(sarima_model)
+checkresiduals(sarima_model)
+
+```
+
+### Model 3: ETS
+```{r coal_ets, echo=TRUE}
+ets_model <- ets(coal_train, model="MAM", damped=TRUE)
+ets_forecast <- forecast(ets_model, h=length(coal_test))
+plot(ets_forecast)
+```
+
+```{r coal_ets_plot, echo=TRUE}
+summary(ets_model)
+checkresiduals(ets_model)
+```
+
+### Model 4: TBATS
+```{r coal_tbats, echo=TRUE}
+tbats_model <- tbats(coal_train)
+tbats_forecast <- forecast(tbats_model, h=length(coal_test))
+plot(tbats_forecast)
+```
+
+```{r coal_tbats_plot, echo=TRUE}
+summary(tbats_model)
+checkresiduals(tbats_model)
+```
+### Prophet Model
+```{r coal_prophet, echo=TRUE}
+
+coal_prophet_df <- coal_train %>%
+  data.frame(ds = as.Date(time(coal_train)), y = coal_train)
+
+coal_prophet <- prophet(coal_prophet_df,
+                        yearly.seasonality = TRUE)
+
+future <- make_future_dataframe(coal_prophet, periods = 20, freq = "quarter")
+coal_forecast <- predict(coal_prophet, future)
+plot(coal_prophet, coal_forecast)
+```
+
+```{r coal_prophet_plot, echo=TRUE}
+coal_df_prophet <- head(coal_forecast, 50)
+coal_df_prophet <- coal_df_prophet %>%
+  mutate(period = ds, value = yhat, residuals = yhat - coal_train)
+
+checkresiduals(coal_df_prophet$residuals)
+```
+### Cross Validation
+
+```{r coal_cv, echo=TRUE, eval=FALSE}
+
+# Create function to calculate RMSE
+calc_rmse <- function(actual, predicted) {
+  sqrt(mean((actual - predicted)^2))
+}
+
+# Load the data
+ts_data <- coal_train
+
+# Define the rolling window parameters
+start_year <- 2012
+end_year <- 2018
+step_size <- 4 # Number of steps to forecast ahead
+year = start_year
+# Initialize vectors to store RMSE values
+sarima_rmses <- c()
+auto_sarima_rmses <- c()
+ets_rmses <- c()
+prophet_rmses <- c()
+
+sarima_aics <- c()
+auto_sarima_aics <- c()
+ets_aics <- c()
+
+# Perform rolling window cross-validation
+for (year in start_year:end_year) {
+  
+  # Define train and validation sets
+  train_end <- c(year , 4)
+  val_start <- c(year + 1, 1)
+  val_end <- c(year + 1, 4)
+  
+  train <- window(ts_data, end=train_end)
+  actual <- window(ts_data, start=val_start, end=val_end)
+  
+  # 1. Fit SARIMA model  
+  sarima_mod <- sarima(xdata = train, p = 2, d = 0, q = 0, P = 1, D = 1, Q = 0, S = 4)
+  sarima_aics <- c(sarima_aics, sarima_mod$fit$aic)
+  sarima_pred <- sarima.for(xdata = train, n.ahead = 4, p = 2, d = 0, q = 0, P = 1, D = 1, Q = 0, S = 4)$pred
+  sarima_rmses <- c(sarima_rmses, calc_rmse(actual, sarima_pred))
+  
+  # 1b. Fit auto SARIMA model
+  auto_sarima_model <- auto.arima(train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift=TRUE)
+  auto_sarima_aics <- c(auto_sarima_aics, auto_sarima_model$aic)
+  auto_sarima_pred <- forecast(auto_sarima_model, h=step_size)$mean
+  auto_sarima_rmses <- c(auto_sarima_rmses, calc_rmse(actual, auto_sarima_pred))
+
+  # 2. Fit ETS model
+  ets_model <- ets(train, model="MAM", damped=TRUE)
+  ets_aics <- c(ets_aics, ets_model$aic)
+  ets_pred <- forecast(ets_model, h=step_size)$mean
+  ets_rmses <- c(ets_rmses, calc_rmse(actual, ets_pred))
+  
+  # 3. Fit Prophet model
+  # note, no AIC since Prophet is Bayesian
+  prophet_df <- data.frame(ds=as.Date(time(train)), y=as.numeric(train))
+  m <- prophet(prophet_df)
+  future <- make_future_dataframe(m, periods=step_size, freq="quarter")
+  prophet_forecast <- predict(m, future)
+  prophet_pred <- tail(prophet_forecast$yhat, step_size)
+  prophet_rmses <- c(prophet_rmses, calc_rmse(actual, prophet_pred))
+}
+
+# Compare cross-validated performance
+cat("SARIMA avg. RMSE:", mean(sarima_rmses), 
+    "\nAuto SARIMA avg. RMSE:", mean(auto_sarima_rmses),
+    "\nETS avg. RMSE:", mean(ets_rmses),
+    "\nProphet avg. RMSE:", mean(prophet_rmses))
+
+cat("SARIMA avg. AIC:", mean(sarima_aics), # something is very strange here
+    "\nAuto SARIMA avg. AIC:", mean(auto_sarima_aics),
+    "\nETS avg. AIC:", mean(ets_aics))
+```
+
+Plot auto-arima (best model under cross validation)
+```{r}
+sarima_model <- auto.arima(coal_train, seasonal=TRUE, stepwise=FALSE, approximation=FALSE, trace=TRUE, allowdrift = TRUE)
+sarima_forecast <- forecast(sarima_model, h=length(coal_test))
+  
+autoplot(sarima_forecast)+
+  geom_line(data = coal, aes(x = c(1:nrow(coal))/4+2008-.25, y = rev(consumption)))
+```
